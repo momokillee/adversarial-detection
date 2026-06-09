@@ -1,0 +1,31 @@
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Models & data (large files — uncomment if you don't want to track them)
+# models/*.pt
+# models/*.pth
+# data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+.cursor
+.pytest_cache/
