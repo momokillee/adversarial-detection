@@ -9,7 +9,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, random_split
 
 from detector.model import AdversarialDetector
 from utils.preprocess import load_image_tensor
@@ -77,22 +77,52 @@ def main():
     if len(dataset) == 0:
         raise SystemExit("No images found. Add samples to data/clean/ and data/adversarial/.")
 
-    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+    total_samples = len(dataset)
+    val_size = int(total_samples * 0.2)
+    train_size = total_samples - val_size
+    train_dataset, val_dataset = random_split(dataset, [train_size, val_size], generator=torch.Generator().manual_seed(42))
+
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+
     model = AdversarialDetector().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.BCEWithLogitsLoss()
 
-    model.train()
     for epoch in range(args.epochs):
-        total_loss = 0.0
-        for images, labels in loader:
-            # Images and labels are already on the correct device
+        model.train()
+        train_loss = 0.0
+        for images, labels in train_loader:
             optimizer.zero_grad()
             loss = criterion(model(images), labels)
             loss.backward()
             optimizer.step()
-            total_loss += loss.item()
-        print(f"Epoch {epoch + 1}/{args.epochs}  loss={total_loss / len(loader):.4f}")
+            train_loss += loss.item()
+
+        train_loss /= len(train_loader)
+
+        model.eval()
+        val_loss = 0.0
+        correct = 0
+        total = 0
+        with torch.no_grad():
+            for images, labels in val_loader:
+                logits = model(images)
+                loss = criterion(logits, labels)
+                val_loss += loss.item()
+                predictions = (torch.sigmoid(logits) >= 0.5).float()
+                correct += (predictions == labels).sum().item()
+                total += labels.size(0)
+
+        val_loss /= len(val_loader)
+        val_accuracy = correct / total if total > 0 else 0.0
+
+        print(
+            f"Epoch {epoch + 1}/{args.epochs}  "
+            f"train_loss={train_loss:.4f}  "
+            f"val_loss={val_loss:.4f}  "
+            f"val_accuracy={val_accuracy:.4f}"
+        )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), args.output)
