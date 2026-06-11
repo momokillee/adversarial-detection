@@ -57,9 +57,9 @@ def main():
     parser.add_argument("--clean-dir", type=Path, default=Path("data/clean"))
     parser.add_argument("--adv-dir", type=Path, default=Path("data/adversarial"))
     parser.add_argument("--output", type=Path, default=Path("models/detector.pt"))
-    parser.add_argument("--epochs", type=int, default=15)
+    parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--device", type=str, choices=["cpu", "cuda"], default=None,
                         help="Device to train on. If None, auto-selects GPU if available.")
     args = parser.parse_args()
