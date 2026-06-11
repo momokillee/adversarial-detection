@@ -1,5 +1,9 @@
 """Train the adversarial detector on clean vs adversarial images."""
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import argparse
 from pathlib import Path
 
@@ -45,7 +49,7 @@ class CleanAdvDataset(Dataset):
         path, label = self.samples[idx]
         # Load image tensor on specified device
         x = load_image_tensor(path, IMAGE_SIZE, self.device).squeeze(0)
-        return x, torch.tensor(label, dtype=torch.float32)
+        return x, torch.tensor(label, dtype=torch.float32).to(self.device)
 
 
 def main():

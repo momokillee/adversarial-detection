@@ -1,5 +1,9 @@
 """Fast Gradient Sign Method (FGSM) attack."""
 
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import argparse
 from pathlib import Path
 
