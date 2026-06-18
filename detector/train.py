@@ -10,6 +10,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset, random_split
+from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score
 
 from detector.model import AdversarialDetector
 from utils.preprocess import load_image_tensor
@@ -127,6 +128,44 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), args.output)
     print(f"Saved weights to {args.output}")
+
+    # Compute confusion matrix on validation set
+    print("\n" + "="*60)
+    print("VALIDATION SET CONFUSION MATRIX")
+    print("="*60)
+    
+    all_predictions = []
+    all_labels = []
+    
+    model.eval()
+    with torch.no_grad():
+        for images, labels in val_loader:
+            logits = model(images)
+            prob = torch.sigmoid(logits)
+            predictions = (prob > 0.5).float()
+            all_predictions.extend(predictions.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+    
+    all_predictions = [int(p) for p in all_predictions]
+    all_labels = [int(l) for l in all_labels]
+    
+    cm = confusion_matrix(all_labels, all_predictions)
+    tn, fp, fn, tp = cm.ravel()
+    
+    print(f"True Negatives (clean correctly identified):     {tn}")
+    print(f"False Positives (clean labelled as adversarial): {fp}")
+    print(f"False Negatives (adversarial labelled as clean): {fn}")
+    print(f"True Positives (adversarial correctly identified): {tp}")
+    print()
+    
+    precision = precision_score(all_labels, all_predictions)
+    recall = recall_score(all_labels, all_predictions)
+    f1 = f1_score(all_labels, all_predictions)
+    
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall:    {recall:.4f}")
+    print(f"F1 Score:  {f1:.4f}")
+    print("="*60)
 
 
 if __name__ == "__main__":
