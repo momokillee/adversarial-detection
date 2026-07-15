@@ -30,3 +30,10 @@ build/
 .cursor
 .pytest_cache/
 cifar_data/
+data/bim_adversarial/
+data/cw_adversarial/
+data/deepfool_adversarial/
+data/gan_adversarial/
+data/unseen_test/
+data/unseen_test_adversarial/
+experiments/
