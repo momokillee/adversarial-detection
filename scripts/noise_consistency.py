@@ -5,9 +5,10 @@ small random Gaussian perturbations. Clean images should remain stable,
 while CW and DeepFool examples often flip predictions near the boundary.
 """
 
+import random
 import sys
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import Dict, List, Tuple
 
 import torch
 
@@ -20,6 +21,7 @@ IMAGE_SIZE = 64
 DEVICE = torch.device("cpu")
 MODEL_PATH = Path("models/detector_frequency.pt")
 THRESHOLD_STEPS = [round(0.001 + i * (0.1 - 0.001) / 19, 6) for i in range(20)]
+RANDOM_SEED = 42
 
 
 def load_detector(path: Path, device: torch.device) -> FrequencyDetector:
@@ -50,6 +52,16 @@ def gather_paths() -> List[Tuple[str, List[Path], int]]:
     ]
 
 
+def split_paths(paths: List[Path], train_ratio: float = 0.7) -> Tuple[List[Path], List[Path]]:
+    if len(paths) < 2:
+        return paths, []
+
+    shuffled = list(paths)
+    random.Random(RANDOM_SEED).shuffle(shuffled)
+    split_idx = int(len(shuffled) * train_ratio)
+    return shuffled[:split_idx], shuffled[split_idx:]
+
+
 def noise_variance(model: FrequencyDetector, image: torch.Tensor) -> float:
     predictions: List[float] = []
 
@@ -61,41 +73,78 @@ def noise_variance(model: FrequencyDetector, image: torch.Tensor) -> float:
     return torch.tensor(predictions, dtype=torch.float32).std(unbiased=False).item()
 
 
-def evaluate_image(
-    model: FrequencyDetector,
-    path: Path,
-    threshold: float,
-) -> Tuple[float, bool]:
-    image = load_image_tensor(path, IMAGE_SIZE, DEVICE)
-    variance = noise_variance(model, image)
-    flagged = variance > threshold
-    return variance, flagged
+def compute_variances(model: FrequencyDetector, paths: List[Path]) -> Dict[Path, float]:
+    return {
+        path: noise_variance(model, load_image_tensor(path, IMAGE_SIZE, DEVICE))
+        for path in paths
+    }
 
 
 def evaluate_category(
-    model: FrequencyDetector,
     paths: List[Path],
     expected: int,
     threshold: float,
-) -> Tuple[int, int, float]:
+    variance_cache: Dict[Path, float],
+    model: FrequencyDetector,
+) -> Tuple[int, int, int, float]:
     total = 0
-    correct = 0
+    freq_correct = 0
+    noise_correct = 0
     variance_sum = 0.0
 
     for path in paths:
         total += 1
-        variance, flagged = evaluate_image(model, path, threshold)
-        predicted = 1 if flagged else 0
-        correct += int(predicted == expected)
+        image = load_image_tensor(path, IMAGE_SIZE, DEVICE)
+        variance = variance_cache[path]
         variance_sum += variance
 
+        original_prob = predict_prob(model, image)
+        freq_pred = 1 if original_prob > 0.5 else 0
+        freq_correct += int(freq_pred == expected)
+
+        flagged = variance > threshold
+        noise_pred = 1 if flagged else 0
+        noise_correct += int(noise_pred == expected)
+
     avg_variance = (variance_sum / total) if total > 0 else 0.0
-    return total, correct, avg_variance
+    return total, freq_correct, noise_correct, avg_variance
+
+
+def evaluate_cascade(
+    paths: List[Path],
+    expected: int,
+    freq_threshold_low: float,
+    freq_threshold_high: float,
+    variance_threshold: float,
+    variance_cache: Dict[Path, float],
+    model: FrequencyDetector,
+) -> Tuple[int, int, int, float]:
+    total = 0
+    correct = 0
+    uncertain_count = 0
+
+    for path in paths:
+        total += 1
+        image = load_image_tensor(path, IMAGE_SIZE, DEVICE)
+        variance = variance_cache[path]
+
+        freq_prob = predict_prob(model, image)
+        if freq_prob < freq_threshold_low or freq_prob > freq_threshold_high:
+            pred = 1 if freq_prob > 0.5 else 0
+        else:
+            uncertain_count += 1
+            pred = 1 if variance > variance_threshold else 0
+
+        correct += int(pred == expected)
+
+    uncertain_ratio = (uncertain_count / total * 100.0) if total > 0 else 0.0
+    return total, correct, uncertain_count, uncertain_ratio
 
 
 def search_optimal_threshold(
     model: FrequencyDetector,
     categories: List[Tuple[str, List[Path], int]],
+    variance_caches: Dict[str, Dict[Path, float]],
 ) -> Tuple[float, List[Dict[str, float]]]:
     search_results: List[Dict[str, float]] = []
 
@@ -109,8 +158,16 @@ def search_optimal_threshold(
         }
 
         for name, paths, expected in categories:
-            total, correct, _ = evaluate_category(model, paths, expected, threshold)
-            rate = (correct / total * 100) if total > 0 else 0.0
+            train_paths, _ = split_paths(paths)
+            variance_cache = variance_caches[name]
+            total, _, noise_correct, _ = evaluate_category(
+                train_paths,
+                expected,
+                threshold,
+                variance_cache,
+                model,
+            )
+            rate = (noise_correct / total * 100) if total > 0 else 0.0
 
             if name == "Clean":
                 result["clean_fp"] = 100.0 - rate
@@ -203,6 +260,32 @@ def print_comparison(
     print(sep)
 
 
+def print_cascade_results(
+    cascade_rates: Dict[str, float],
+    uncertain_rates: Dict[str, float],
+    freq_rates: Dict[str, float],
+    noise_rates: Dict[str, float],
+) -> None:
+    header = (
+        f"{'Category':<10} | {'Cascade Rate':>12} | {'Noise-check %':>13} | "
+        f"{'Freq Only':>10} | {'Noise Only':>11}"
+    )
+    sep = "-" * len(header)
+    print("\nCascade evaluation results")
+    print(sep)
+    print(header)
+    print(sep)
+
+    for name in ["Clean", "CW", "DeepFool"]:
+        print(
+            f"{name:<10} | {cascade_rates.get(name, 0.0):12.2f}% | "
+            f"{uncertain_rates.get(name, 0.0):13.2f}% | "
+            f"{freq_rates.get(name, 0.0):10.2f}% | "
+            f"{noise_rates.get(name, 0.0):11.2f}%"
+        )
+    print(sep)
+
+
 def main() -> None:
     import argparse
 
@@ -217,10 +300,20 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    torch.manual_seed(RANDOM_SEED)
     model = load_detector(MODEL_PATH, DEVICE)
     categories = gather_paths()
 
-    optimal_threshold, search_results = search_optimal_threshold(model, categories)
+    variance_caches: Dict[str, Dict[Path, float]] = {}
+    for name, paths, _ in categories:
+        train_paths, _ = split_paths(paths)
+        variance_caches[name] = compute_variances(model, train_paths)
+
+    optimal_threshold, search_results = search_optimal_threshold(
+        model,
+        categories,
+        variance_caches,
+    )
     print_threshold_search(search_results)
     print(f"\nOptimal threshold selected: {optimal_threshold:.6f}\n")
 
@@ -229,32 +322,36 @@ def main() -> None:
     category_results: List[Tuple[str, int, int, float]] = []
     freq_rates: Dict[str, float] = {}
     noise_rates: Dict[str, float] = {}
+    cascade_rates: Dict[str, float] = {}
+    uncertain_rates: Dict[str, float] = {}
     clean_fp = {"freq": 0.0, "noise": 0.0}
 
     for name, paths, expected in categories:
-        total = 0
-        freq_correct = 0
-        noise_correct = 0
-        variance_sum = 0.0
+        _, test_paths = split_paths(paths)
+        variance_cache = compute_variances(model, test_paths)
+        total, freq_correct, noise_correct, avg_variance = evaluate_category(
+            test_paths,
+            expected,
+            threshold,
+            variance_cache,
+            model,
+        )
 
-        for path in paths:
-            total += 1
-            image = load_image_tensor(path, IMAGE_SIZE, DEVICE)
-
-            original_prob = predict_prob(model, image)
-            freq_pred = 1 if original_prob > 0.5 else 0
-            freq_correct += int(freq_pred == expected)
-
-            variance, flagged = evaluate_image(model, path, threshold)
-            noise_pred = 1 if flagged else 0
-            noise_correct += int(noise_pred == expected)
-
-            variance_sum += variance
-
-        avg_variance = (variance_sum / total) if total > 0 else 0.0
         category_results.append((name, total, noise_correct, avg_variance))
         freq_rates[name] = (freq_correct / total * 100) if total > 0 else 0.0
         noise_rates[name] = (noise_correct / total * 100) if total > 0 else 0.0
+
+        cascade_total, cascade_correct, uncertain_count, uncertain_ratio = evaluate_cascade(
+            test_paths,
+            expected,
+            0.3,
+            0.7,
+            threshold,
+            variance_cache,
+            model,
+        )
+        cascade_rates[name] = (cascade_correct / cascade_total * 100.0) if cascade_total > 0 else 0.0
+        uncertain_rates[name] = uncertain_ratio
 
         if name == "Clean":
             clean_fp["freq"] = 100.0 - freq_rates[name]
@@ -263,6 +360,7 @@ def main() -> None:
     print("\nNoise consistency detection results")
     print_category_results(category_results)
     print_comparison(freq_rates, noise_rates, clean_fp)
+    print_cascade_results(cascade_rates, uncertain_rates, freq_rates, noise_rates)
 
 
 def predict_prob(model: FrequencyDetector, tensor: torch.Tensor) -> float:

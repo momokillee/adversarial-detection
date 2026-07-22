@@ -1,0 +1,179 @@
+I’m reviewing the relevant detector and evaluation files now so I can show you the exact threshold logic and outline the changes before I touch anything.
+
+Searched for text `score|threshold|>=|<=|predict_proba|mahalanobis_score` (`**/scripts/**/*.py`), 376 results
+
+The relevant spots are identified, and I’m pulling the exact code around them so I can show you the current thresholding logic precisely before proposing the edits.
+
+Read [](file:///Users/albin/Documents/adversarial-detection/scripts/mahalanobis_detector.py#140-140), lines 140 to 220
+
+Read [](file:///Users/albin/Documents/adversarial-detection/scripts/paper_ready_evaluation.py#100-100), lines 100 to 180
+
+I have not changed any files yet, per your instruction. Below are the exact places I would change and the plan for each task.
+
+1. Current Mahalanobis code that needs direction fixing
+
+The core Mahalanobis score in mahalanobis_detector.py is currently:
+
+```python
+def mahalanobis_score(
+    feature: torch.Tensor,
+    class_means: torch.Tensor,
+    precision: torch.Tensor
+) -> float:
+    """
+    Compute Mahalanobis distance score for one feature vector.
+    Higher score = more likely clean.
+    Lower score = more likely adversarial.
+
+    Score = max_c [ -(f - mu_c)^T * precision * (f - mu_c) ]
+    """
+    scores = []
+    for mu_c in class_means:
+        diff = feature - mu_c
+        score = -diff @ precision @ diff
+        scores.append(score.item())
+    return max(scores)
+```
+
+The thresholding logic in the evaluation path in paper_ready_evaluation.py is currently:
+
+```python
+def compute_mahalanobis_scores(paths, resnet, extractor, class_means, precision, maha_mean, maha_std, device):
+    scores = []
+    with torch.no_grad():
+        for path in paths:
+            img = load_image_tensor(path, IMAGE_SIZE, device).to(device)
+            _ = resnet(img)
+            feat = extractor.get().squeeze(0)
+            raw = float(mahalanobis_score(feat, class_means, precision))
+            z = (raw - maha_mean) / maha_std
+            scores.append(-z)
+    return np.array(scores, dtype=np.float64)
+```
+
+and then:
+
+```python
+def evaluate_scores(y_true, scores, threshold):
+    preds = (scores >= threshold).astype(int)
+    metrics = compute_confusion_metrics(y_true, preds)
+    ...
+```
+
+This is the part that needs to be made consistent with the intended semantics:
+- higher Mahalanobis score = more clean
+- lower Mahalanobis score = more adversarial
+
+The change I would apply is:
+
+```python
+# current
+z = (raw - maha_mean) / maha_std
+scores.append(-z)
+
+# proposed
+z = (raw - maha_mean) / maha_std
+scores.append(z)
+```
+
+and then:
+
+```python
+# current
+preds = (scores >= threshold).astype(int)
+
+# proposed
+preds = (scores < threshold).astype(int)
+```
+
+That keeps the detector direction consistent and should remove the AUROC inversion you observed.
+
+2. Plan for Task 2: threshold calibration for all detectors
+
+I will update paper_ready_evaluation.py so that:
+
+- the threshold is selected from the ROC curve using Youden’s J statistic:
+  - `fpr, tpr, thresholds = roc_curve(y_true, scores)`
+  - `optimal_idx = np.argmax(tpr - fpr)`
+  - `optimal_threshold = thresholds[optimal_idx]`
+
+- the script will compute predictions at:
+  - the default threshold `0.5` for comparison
+  - the ROC-based optimal threshold for the final metrics
+
+- I will print both results side by side in the evaluation output so the improvement is visible.
+
+The intended change looks like this:
+
+```python
+from sklearn.metrics import roc_curve
+
+def select_threshold(scores, labels):
+    scores = np.asarray(scores, dtype=np.float64)
+    labels = np.asarray(labels, dtype=int)
+
+    fpr, tpr, thresholds = roc_curve(labels, scores)
+
+    # Youden's J statistic: tpr - fpr
+    optimal_idx = np.argmax(tpr - fpr)
+    optimal_threshold = thresholds[optimal_idx]
+
+    return float(optimal_threshold)
+```
+
+3. Plan for Task 3: per-attack breakdown table
+
+I will add a new helper in paper_ready_evaluation.py that:
+
+- loops over the attack folders:
+  - clean
+  - adversarial split by `fgsm_` and `pgd_`
+  - bim_adversarial
+  - cw_adversarial
+  - deepfool_adversarial
+
+- evaluates each detector separately:
+  - Frequency
+  - Mahalanobis
+  - Dual
+  - Fusion
+
+- produces a table like:
+
+```text
+Attack | Frequency | Mahalanobis | Dual | Fusion
+Clean  | ...       | ...         | ...  | ...
+FGSM   | ...       | ...         | ...  | ...
+PGD    | ...       | ...         | ...  | ...
+BIM    | ...       | ...         | ...  | ...
+CW     | ...       | ...         | ...  | ...
+DeepFool | ...     | ...         | ...  | ...
+```
+
+4. Plan for Task 4: final paper-ready metrics table
+
+I will add a final export step that writes outputs/paper_ready/final_metrics.csv with columns:
+
+- Method
+- AUROC
+- AUPRC
+- Accuracy at optimal threshold
+- FPR at 95% TPR
+
+The FPR-at-95%-TPR part will be computed from the ROC curve using the first threshold where TPR reaches at least 95%.
+
+The intended logic is:
+
+```python
+# from roc_curve
+tpr_mask = tpr >= 0.95
+if np.any(tpr_mask):
+    idx = np.where(tpr_mask)[0][0]
+    fpr_at_95_tpr = fpr[idx]
+else:
+    fpr_at_95_tpr = np.nan
+```
+
+I will not change model architectures, retrain any models, or alter the data pipeline beyond the evaluation logic and thresholding.
+
+If you want, I can apply these changes next in the order above.
