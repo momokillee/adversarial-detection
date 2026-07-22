@@ -19,8 +19,8 @@ from attacks.victim_model import load_victim
 from utils.preprocess import denormalize_tensor, load_image_tensor, save_tensor_image
 
 IMAGE_SIZE = 64
-INPUT_DIR = Path("data/clean_labeled/attack_source")
-OUTPUT_DIR = Path("data/deepfool_adversarial_v2")
+INPUT_DIR = Path("data/clean")
+OUTPUT_DIR = Path("data/deepfool_adversarial")
 PER_IMAGE_TIMEOUT_SECONDS = 30
 
 
@@ -69,7 +69,7 @@ def main():
     skipped_existing = 0
     for img_path in image_paths:
         rel_path = img_path.relative_to(args.input_dir)
-        out_path = args.output_dir / rel_path
+        out_path = args.output_dir / ("deepfool_" + rel_path.name)
         if out_path.exists():
             skipped_existing += 1
         else:
@@ -112,7 +112,7 @@ def main():
 
         adv_to_save = denormalize_tensor(adv_image)
         rel_path = img_path.relative_to(args.input_dir)
-        out_path = args.output_dir / rel_path
+        out_path = args.output_dir / ("deepfool_" + rel_path.name)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         save_tensor_image(adv_to_save, out_path)
         saved_count += 1
