@@ -34,12 +34,12 @@ class CleanAdvDataset(Dataset):
         self.device = device
 
         # Load clean images (label=0)
-        for p in clean_dir.glob("*"):
+        for p in clean_dir.rglob("*"):
             if p.suffix.lower() in {".jpg", ".jpeg", ".png"}:
                 self.samples.append((p, 0))
 
         # Load adversarial images (label=1)
-        for p in adv_dir.glob("*"):
+        for p in adv_dir.rglob("*"):
             if p.suffix.lower() in {".jpg", ".jpeg", ".png"}:
                 self.samples.append((p, 1))
 
