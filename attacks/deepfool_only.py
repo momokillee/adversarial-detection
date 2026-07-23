@@ -1,5 +1,9 @@
 """Generate DeepFool adversarial examples only (isolated from CW).
 
+Single-image version -- kept as a CPU-friendly fallback. For GPU runs
+(e.g. on Colab), prefer attacks/deepfool_batched.py instead, which
+batches images together so the GPU actually gets utilized.
+
 Includes:
 - Resume support: skips images that already have a saved output file
 - Per-image timeout: if a single image takes too long, it's skipped
@@ -19,8 +23,8 @@ from attacks.victim_model import load_victim
 from utils.preprocess import denormalize_tensor, load_image_tensor, save_tensor_image
 
 IMAGE_SIZE = 64
-INPUT_DIR = Path("data/clean")
-OUTPUT_DIR = Path("data/deepfool_adversarial")
+INPUT_DIR = Path("data/clean_labeled/attack_source")
+OUTPUT_DIR = Path("data/deepfool_adversarial_v2")
 PER_IMAGE_TIMEOUT_SECONDS = 30
 
 
@@ -64,12 +68,11 @@ def main():
 
     print(f"Found {len(image_paths)} clean source images in {args.input_dir}")
 
-    # Resume support: figure out which images already have output
     remaining = []
     skipped_existing = 0
     for img_path in image_paths:
         rel_path = img_path.relative_to(args.input_dir)
-        out_path = args.output_dir / ("deepfool_" + rel_path.name)
+        out_path = args.output_dir / rel_path
         if out_path.exists():
             skipped_existing += 1
         else:
@@ -79,7 +82,6 @@ def main():
 
     atk = torchattacks.DeepFool(model, steps=args.steps)
 
-    # Signal-based timeout only works on Unix (macOS/Linux), not Windows.
     use_timeout = hasattr(signal, "SIGALRM")
     if use_timeout:
         signal.signal(signal.SIGALRM, _timeout_handler)
@@ -112,7 +114,7 @@ def main():
 
         adv_to_save = denormalize_tensor(adv_image)
         rel_path = img_path.relative_to(args.input_dir)
-        out_path = args.output_dir / ("deepfool_" + rel_path.name)
+        out_path = args.output_dir / rel_path
         out_path.parent.mkdir(parents=True, exist_ok=True)
         save_tensor_image(adv_to_save, out_path)
         saved_count += 1
