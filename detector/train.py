@@ -15,11 +15,11 @@ IMAGE_SIZE = 64
 
 class CleanAdvDataset(Dataset):
     """Binary dataset: clean (label=0) vs adversarial (label=1) images."""
-    
+
     def __init__(self, clean_dir: Path, adv_dir: Path, device: torch.device = torch.device("cpu")):
         """
         Initialize dataset.
-        
+
         Args:
             clean_dir: Path to clean images
             adv_dir: Path to adversarial images
@@ -27,12 +27,12 @@ class CleanAdvDataset(Dataset):
         """
         self.samples = []
         self.device = device
-        
+
         # Load clean images (label=0)
         for p in clean_dir.rglob("*"):
             if p.suffix.lower() in {".jpg", ".jpeg", ".png"}:
                 self.samples.append((p, 0))
-        
+
         # Load adversarial images (label=1)
         for p in adv_dir.rglob("*"):
             if p.suffix.lower() in {".jpg", ".jpeg", ".png"}:
@@ -43,9 +43,10 @@ class CleanAdvDataset(Dataset):
 
     def __getitem__(self, idx):
         path, label = self.samples[idx]
-        # Load image tensor on specified device
         x = load_image_tensor(path, IMAGE_SIZE, self.device).squeeze(0)
-        return x, torch.tensor(label, dtype=torch.float32)
+        x = x.to(self.device)  # explicit safety net -- load_image_tensor's
+                                 # device arg isn't always fully respected
+        return x, torch.tensor(label, dtype=torch.float32).to(self.device)
 
 
 def main():
@@ -60,18 +61,15 @@ def main():
                         help="Device to train on. If None, auto-selects GPU if available.")
     args = parser.parse_args()
 
-    # Auto-select device or use user choice
     if args.device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(args.device)
-    
     print(f"Using device: {device}")
-    
-    # Load dataset on the selected device
+
     dataset = CleanAdvDataset(args.clean_dir, args.adv_dir, device=device)
     if len(dataset) == 0:
-        raise SystemExit("No images found. Add samples to data/clean/ and data/adversarial/.")
+        raise SystemExit(f"No images found. Check {args.clean_dir} and {args.adv_dir}.")
 
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
     model = AdversarialDetector().to(device)
@@ -82,7 +80,6 @@ def main():
     for epoch in range(args.epochs):
         total_loss = 0.0
         for images, labels in loader:
-            # Images and labels are already on the correct device
             optimizer.zero_grad()
             loss = criterion(model(images), labels)
             loss.backward()

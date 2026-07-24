@@ -46,6 +46,8 @@ class CleanAdvDataset(Dataset):
     def __getitem__(self, idx):
         path, label = self.samples[idx]
         x = load_image_tensor(path, IMAGE_SIZE, self.device).squeeze(0)
+        x = x.to(self.device)  # explicit safety net -- load_image_tensor's
+                                 # device arg isn't always fully respected
         return x, torch.tensor(label, dtype=torch.float32).to(self.device)
 
 
