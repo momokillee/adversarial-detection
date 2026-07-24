@@ -37,3 +37,19 @@ data/gan_adversarial/
 data/unseen_test/
 data/unseen_test_adversarial/
 experiments/
+data/bim_adversarial/
+data/cw_adversarial/
+data/deepfool_adversarial/
+data/gan_adversarial/
+data/unseen_test/
+data/unseen_test_adversarial/
+experiments/ data/recompression_control/
+experiments/ data/recompression_control/
+data/bim_adversarial/
+data/cw_adversarial/
+data/deepfool_adversarial/
+data/gan_adversarial/
+data/unseen_test/
+data/unseen_test_adversarial/
+experiments/
+data/recompression_control/
